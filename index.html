@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -23,14 +24,8 @@
 
     // Controls
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    camera.position.set(0, 0, 10); // Initial camera position
+    camera.position.set(0, 10, 10); // Initial camera position: above and slightly back
     controls.update();
-
-    // Helpers for debugging
-    const gridHelper = new THREE.GridHelper(10, 10);
-    scene.add(gridHelper);
-    const axesHelper = new THREE.AxesHelper(5);
-    scene.add(axesHelper);
 
     // Constants for converting degrees to meters (approximate for Brussels latitude)
     const METERS_PER_DEGREE_LAT = 111320; // Approx at equator
@@ -57,33 +52,28 @@
         const group = new THREE.Group();
         const material = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 5 });
 
-        // 1. Find the overall bounding box for X, Y, and Z in meters
+        // 1. Find the overall bounding box for X, Y, and Z in meters, and also the minimum elevation
         const overallBboxMeters = new THREE.Box3();
-        let totalElevation = 0;
-        let elevationCount = 0;
+        let minElevation = Infinity;
 
         for (const feature of data.features) {
             if (feature.geometry && feature.geometry.coordinates) {
                 for (const coord of feature.geometry.coordinates) {
-                    const xMeters = coord[0] * METERS_PER_DEGREE_LON;
-                    const yMeters = coord[1] * METERS_PER_DEGREE_LAT;
+                    // Standard mapping: Longitude for X, Latitude for Y
+                    const xMeters = coord[0] * METERS_PER_DEGREE_LON; 
+                    const yMeters = coord[1] * METERS_PER_DEGREE_LAT; 
                     const zMeters = coord[2] || 0;
 
                     overallBboxMeters.expandByPoint(new THREE.Vector3(xMeters, yMeters, zMeters));
-
-                    if (typeof coord[2] === 'number' && !isNaN(coord[2])) {
-                        totalElevation += coord[2];
-                        elevationCount++;
-                    }
+                    minElevation = Math.min(minElevation, zMeters);
                 }
             }
         }
         const overallCenterMeters = overallBboxMeters.getCenter(new THREE.Vector3());
-        const avgElevation = elevationCount > 0 ? totalElevation / elevationCount : 0;
 
         console.log("Overall Bounding Box (Meters):", overallBboxMeters);
         console.log("Overall Center (Meters):", overallCenterMeters);
-        console.log("Average Elevation:", avgElevation);
+        console.log("Minimum Elevation:", minElevation);
 
         const verticalExaggeration = 5; // Adjust this value to exaggerate vertical scale
 
@@ -102,11 +92,12 @@
 
             const points = feature.geometry.coordinates.map(coord => {
                 // Convert to meters, center, and apply global scale
-                const x = (coord[0] * METERS_PER_DEGREE_LON - overallCenterMeters.x) * globalScaleFactor;
-                const y = (coord[1] * METERS_PER_DEGREE_LAT - overallCenterMeters.y) * globalScaleFactor;
+                // Standard mapping: Longitude for X, Latitude for Y
+                const x = (coord[0] * METERS_PER_DEGREE_LON - overallCenterMeters.x) * globalScaleFactor; 
+                const y = (coord[1] * METERS_PER_DEGREE_LAT - overallCenterMeters.y) * globalScaleFactor; 
 
-                // Normalize Z, apply exaggeration, and then global scale
-                let z = (coord[2] || 0) - overallCenterMeters.z;
+                // Normalize Z relative to minElevation, apply exaggeration, and then global scale
+                let z = ((coord[2] || 0) - minElevation); // Normalize Z relative to minElevation
                 z = (z * verticalExaggeration) * globalScaleFactor; 
 
                 return new THREE.Vector3(x, y, z);
@@ -117,6 +108,18 @@
         }
 
         scene.add(group);
+
+        // Add the plane at altitude 0 (relative to the normalized Z)
+        const planeWidth = sizeMeters.x * globalScaleFactor;
+        const planeHeight = sizeMeters.y * globalScaleFactor;
+        const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+        const planeMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc, side: THREE.DoubleSide });
+        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+
+        // Position the plane at Z=0, as the route's lowest point is now at Z=0
+        plane.position.set(0, 0, 0); 
+        // REMOVED: plane.rotation.x = Math.PI / 2; // This was making it perpendicular
+        scene.add(plane);
 
       })
       .catch(error => {
