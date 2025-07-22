@@ -1,0 +1,93 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Bike Route Visualization</title>
+  <style>
+    body { margin: 0; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <script src="https://unpkg.com/three@0.139.2/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.139.2/examples/js/controls/OrbitControls.js"></script>
+  <script>
+    // Scene, Camera, Renderer
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf0f0f0);
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Controls
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    camera.position.set(0, 0, 10);
+    controls.update();
+
+    // Helpers for debugging
+    const gridHelper = new THREE.GridHelper(10, 10);
+    scene.add(gridHelper);
+    const axesHelper = new THREE.AxesHelper(5);
+    scene.add(axesHelper);
+
+    // Load the route data
+    fetch('route.geojson')
+      .then(response => response.json())
+      .then(data => {
+        const group = new THREE.Group();
+        const material = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 5 }); // Made line thicker
+
+        // 1. First, find the center of all points
+        const bbox = new THREE.Box3();
+        for (const feature of data.features) {
+            for (const coord of feature.geometry.coordinates) {
+                bbox.expandByPoint(new THREE.Vector3(coord[0], coord[1], 0));
+            }
+        }
+        const center = bbox.getCenter(new THREE.Vector3());
+
+        // 2. Now, create the geometries with normalized coordinates
+        for (const feature of data.features) {
+            const points = feature.geometry.coordinates.map(coord => {
+                // Subtract the center from each point
+                return new THREE.Vector3(coord[0] - center.x, coord[1] - center.y, 0);
+            });
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const line = new THREE.Line(geometry, material);
+            group.add(line);
+        }
+
+        // 3. The group is already centered at (0,0,0). Now we just need to scale it.
+        const groupBox = new THREE.Box3().setFromObject(group);
+        const size = groupBox.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y);
+        const scale = 10 / maxDim;
+        group.scale.multiplyScalar(scale);
+
+        scene.add(group);
+
+      })
+      .catch(error => {
+        console.error('Error loading or processing GeoJSON:', error);
+      });
+
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }, false);
+
+  </script>
+</body>
+</html>
