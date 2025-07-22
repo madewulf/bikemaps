@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html>
 <head>
@@ -12,6 +11,8 @@
   <script src="https://unpkg.com/three@0.139.2/build/three.min.js"></script>
   <script src="https://unpkg.com/three@0.139.2/examples/js/controls/OrbitControls.js"></script>
   <script>
+    console.log("Script started.");
+
     // Scene, Camera, Renderer
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf0f0f0);
@@ -22,7 +23,7 @@
 
     // Controls
     const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    camera.position.set(0, 0, 10);
+    camera.position.set(0, 0, 10); // Initial camera position
     controls.update();
 
     // Helpers for debugging
@@ -31,39 +32,89 @@
     const axesHelper = new THREE.AxesHelper(5);
     scene.add(axesHelper);
 
-    // Load the route data
-    fetch('route.geojson')
-      .then(response => response.json())
-      .then(data => {
-        const group = new THREE.Group();
-        const material = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 5 }); // Made line thicker
+    // Constants for converting degrees to meters (approximate for Brussels latitude)
+    const METERS_PER_DEGREE_LAT = 111320; // Approx at equator
+    const METERS_PER_DEGREE_LON = 111320 * Math.cos(50.83 * Math.PI / 180); // Approx at Brussels latitude
 
-        // 1. First, find the center of all points
-        const bbox = new THREE.Box3();
+    // Load the route data
+    console.log("Fetching route.geojson...");
+    fetch('route.geojson')
+      .then(response => {
+        console.log("Fetch response received.");
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then(data => {
+        console.log("GeoJSON data parsed:", data);
+
+        if (!data.features || data.features.length === 0) {
+            console.error("GeoJSON has no features.");
+            return;
+        }
+
+        const group = new THREE.Group();
+        const material = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 5 });
+
+        // 1. Find the overall bounding box for X, Y, and Z in meters
+        const overallBboxMeters = new THREE.Box3();
+        let totalElevation = 0;
+        let elevationCount = 0;
+
         for (const feature of data.features) {
-            for (const coord of feature.geometry.coordinates) {
-                bbox.expandByPoint(new THREE.Vector3(coord[0], coord[1], 0));
+            if (feature.geometry && feature.geometry.coordinates) {
+                for (const coord of feature.geometry.coordinates) {
+                    const xMeters = coord[0] * METERS_PER_DEGREE_LON;
+                    const yMeters = coord[1] * METERS_PER_DEGREE_LAT;
+                    const zMeters = coord[2] || 0;
+
+                    overallBboxMeters.expandByPoint(new THREE.Vector3(xMeters, yMeters, zMeters));
+
+                    if (typeof coord[2] === 'number' && !isNaN(coord[2])) {
+                        totalElevation += coord[2];
+                        elevationCount++;
+                    }
+                }
             }
         }
-        const center = bbox.getCenter(new THREE.Vector3());
+        const overallCenterMeters = overallBboxMeters.getCenter(new THREE.Vector3());
+        const avgElevation = elevationCount > 0 ? totalElevation / elevationCount : 0;
 
-        // 2. Now, create the geometries with normalized coordinates
+        console.log("Overall Bounding Box (Meters):", overallBboxMeters);
+        console.log("Overall Center (Meters):", overallCenterMeters);
+        console.log("Average Elevation:", avgElevation);
+
+        const verticalExaggeration = 5; // Adjust this value to exaggerate vertical scale
+
+        // Calculate a single scaling factor for the entire route in meters
+        const sizeMeters = overallBboxMeters.getSize(new THREE.Vector3());
+        const maxDimMeters = Math.max(sizeMeters.x, sizeMeters.y, sizeMeters.z * verticalExaggeration); // Consider exaggerated Z
+        const globalScaleFactor = maxDimMeters > 0 ? 10 / maxDimMeters : 1; // Scale to fit within a 10-unit cube
+
+        console.log("Size (Meters):", sizeMeters);
+        console.log("Max Dimension (Meters, with exaggerated Z):", maxDimMeters);
+        console.log("Global Scale Factor:", globalScaleFactor);
+
+        // 2. Create the geometries with normalized and scaled coordinates
         for (const feature of data.features) {
+            if (!feature.geometry || !feature.geometry.coordinates) continue;
+
             const points = feature.geometry.coordinates.map(coord => {
-                // Subtract the center from each point
-                return new THREE.Vector3(coord[0] - center.x, coord[1] - center.y, 0);
+                // Convert to meters, center, and apply global scale
+                const x = (coord[0] * METERS_PER_DEGREE_LON - overallCenterMeters.x) * globalScaleFactor;
+                const y = (coord[1] * METERS_PER_DEGREE_LAT - overallCenterMeters.y) * globalScaleFactor;
+
+                // Normalize Z, apply exaggeration, and then global scale
+                let z = (coord[2] || 0) - overallCenterMeters.z;
+                z = (z * verticalExaggeration) * globalScaleFactor; 
+
+                return new THREE.Vector3(x, y, z);
             });
             const geometry = new THREE.BufferGeometry().setFromPoints(points);
             const line = new THREE.Line(geometry, material);
             group.add(line);
         }
-
-        // 3. The group is already centered at (0,0,0). Now we just need to scale it.
-        const groupBox = new THREE.Box3().setFromObject(group);
-        const size = groupBox.getSize(new THREE.Vector3());
-        const maxDim = Math.max(size.x, size.y);
-        const scale = 10 / maxDim;
-        group.scale.multiplyScalar(scale);
 
         scene.add(group);
 
