@@ -31,6 +31,15 @@
     const METERS_PER_DEGREE_LAT = 111320; // Approx at equator
     const METERS_PER_DEGREE_LON = 111320 * Math.cos(50.83 * Math.PI / 180); // Approx at Brussels latitude
 
+    // Hardcoded bounding box from route.geojson analysis
+    const min_lon = 4.3554559;
+    const min_lat = 50.8289025;
+    const max_lon = 4.3933269;
+    const max_lat = 50.8427537;
+
+    // IMPORTANT: Replace with your Mapbox Access Token
+    const MAPBOX_ACCESS_TOKEN = "pk.eyJ1IjoibWFkZXd1bGZyZWR0ZWFwb3QiLCJhIjoiY21kZjBiZmd3MDdmbDJrc2R6aHoweHFkcyJ9.w2o-quDp2jv58qE-7CTQUA";
+
     // Load the route data
     console.log("Fetching route.geojson...");
     fetch('route.geojson')
@@ -109,17 +118,39 @@
 
         scene.add(group);
 
-        // Add the plane at altitude 0 (relative to the normalized Z)
-        const planeWidth = sizeMeters.x * globalScaleFactor;
-        const planeHeight = sizeMeters.y * globalScaleFactor;
-        const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
-        const planeMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc, side: THREE.DoubleSide });
-        const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+        // Add the plane with map texture
+        const mapTextureLoader = new THREE.TextureLoader();
+        // Mapbox Static Images API URL
+        const mapImageUrl = `https://api.mapbox.com/styles/v1/mapbox/streets-v11/static/[${min_lon},${min_lat},${max_lon},${max_lat}]/800x600?access_token=${MAPBOX_ACCESS_TOKEN}`;
 
-        // Position the plane at Z=0, as the route's lowest point is now at Z=0
-        plane.position.set(0, 0, 0); 
-        // REMOVED: plane.rotation.x = Math.PI / 2; // This was making it perpendicular
-        scene.add(plane);
+        mapTextureLoader.load(mapImageUrl, function(texture) {
+            const planeMaterial = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+
+            // Calculate plane dimensions based on geographical extent and global scale factor
+            const planeGeoWidth = max_lon - min_lon;
+            const planeGeoHeight = max_lat - min_lat;
+
+            const planeGeoWidthMeters = planeGeoWidth * METERS_PER_DEGREE_LON;
+            const planeGeoHeightMeters = planeGeoHeight * METERS_PER_DEGREE_LAT;
+
+            const planeWidth = planeGeoWidthMeters * globalScaleFactor;
+            const planeHeight = planeGeoHeightMeters * globalScaleFactor;
+
+            const planeGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
+            const plane = new THREE.Mesh(planeGeometry, planeMaterial);
+
+            // Position the plane at Z=0, as the route's lowest point is now at Z=0
+            plane.position.set(0, 0, 0); 
+            scene.add(plane);
+        }, undefined, function(err) {
+            console.error('Error loading map texture:', err);
+            // Fallback to a simple gray plane if texture fails to load
+            const fallbackPlaneMaterial = new THREE.MeshBasicMaterial({ color: 0xcccccc, side: THREE.DoubleSide });
+            const fallbackPlaneGeometry = new THREE.PlaneGeometry(sizeMeters.x * globalScaleFactor, sizeMeters.y * globalScaleFactor);
+            const fallbackPlane = new THREE.Mesh(fallbackPlaneGeometry, fallbackPlaneMaterial);
+            fallbackPlane.position.set(0, 0, 0);
+            scene.add(fallbackPlane);
+        });
 
       })
       .catch(error => {
